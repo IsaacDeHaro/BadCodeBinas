@@ -1,0 +1,1194 @@
+Para separar la lógica de negocios del controlador, necesitamos mover la lógica relacionada con la gestión de productos a un servicio independiente. Este servicio se encargará de la interacción con la base de datos y de las operaciones relacionadas, manteniendo al controlador únicamente como intermediario entre las solicitudes del usuario y las respuestas.
+
+### Paso 1: Crear un Servicio de Negocio para Productos
+
+1. Crea una carpeta llamada `Services` en el proyecto.
+2. Dentro de esta carpeta, crea una interfaz `IProductService` y una clase `ProductService` que implementará esta interfaz.
+
+### Interfaz IProductService
+
+La interfaz define los métodos que nuestro servicio de productos debe proporcionar:
+
+```csharp
+using MyApp.Models;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public interface IProductService
+    {
+        IEnumerable<Product> GetAllProducts();
+        Product GetProductById(int id);
+        void AddProduct(Product product);
+    }
+}
+```
+
+### Clase ProductService
+
+La implementación de `ProductService` contendrá la lógica de negocios, interactuando con `DatabaseContext` para obtener y modificar datos. 
+
+```csharp
+using MyApp.Data;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly DatabaseContext _db;
+
+        public ProductService(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        public IEnumerable<Product> GetAllProducts()
+        {
+            // Aquí se optimizará la consulta para obtener todos los productos sin bucles innecesarios
+            return _db.Products.ToList();
+        }
+
+        public Product GetProductById(int id)
+        {
+            return _db.Products.Find(id);
+        }
+
+        public void AddProduct(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+### Paso 2: Inyectar el Servicio en el Controlador
+
+Modificaremos el `ProductController` para utilizar `IProductService` en lugar de directamente `DatabaseContext`. Esto permitirá que el controlador se enfoque únicamente en la lógica de manejo de solicitudes.
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using MyApp.Models;
+using MyApp.Services;
+using System.Collections.Generic;
+
+namespace MyApp.Controllers
+{
+    public class ProductController : Controller
+    {
+        private readonly IProductService _productService;
+
+        public ProductController(IProductService productService)
+        {
+            _productService = productService;
+        }
+
+        public IActionResult Index()
+        {
+            var productsList = _productService.GetAllProducts();
+            return View(productsList);
+        }
+
+        public IActionResult Details(int id)
+        {
+            var product = _productService.GetProductById(id);
+            if (product == null)
+            {
+                return NotFound("Producto no encontrado");
+            }
+            return View(product);
+        }
+
+        [HttpPost]
+        public IActionResult Create(Product product)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View(product);
+            }
+
+            _productService.AddProduct(product);
+            return RedirectToAction("Index");
+        }
+    }
+}
+```
+
+### Paso 3: Configurar la Inyección de Dependencias en `Program.cs`
+
+Finalmente, necesitamos registrar el servicio `IProductService` en la configuración de inyección de dependencias, de modo que el controlador reciba una instancia cuando sea necesario.
+
+```csharp
+using MyApp.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Otras configuraciones...
+
+builder.Services.AddScoped<IProductService, ProductService>();
+
+var app = builder.Build();
+```
+
+### Resumen
+
+Ahora el `ProductController` solo se encarga de manejar las solicitudes HTTP, mientras que `ProductService` realiza toda la lógica relacionada con los productos. Este cambio permite pruebas unitarias más simples para ambos componentes y facilita el mantenimiento del código.
+
+Ahora vamos con el segundo objetivo: **Implementar Dependency Injection (DI)** de manera correcta en el controlador. Ya avanzamos en este aspecto al mover el `DatabaseContext` a un servicio y registrar `IProductService` en la inyección de dependencias, pero asegurémonos de que las dependencias estén configuradas y aplicadas de manera adecuada para facilitar pruebas y mejorar la flexibilidad del código.
+
+### Paso 1: Asegurarnos de que `DatabaseContext` use Inyección de Dependencias
+
+Para que `DatabaseContext` también use inyección de dependencias, debemos asegurarnos de que esté registrado en el contenedor de servicios. Esto permite que se cree una instancia administrada por el sistema, que se liberará cuando ya no sea necesaria.
+
+En `Program.cs`, registra `DatabaseContext` como un servicio de ámbito (`Scoped`):
+
+```csharp
+using MyApp.Data;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Registro del contexto de base de datos
+builder.Services.AddDbContext<DatabaseContext>();
+
+// Registro del servicio de productos
+builder.Services.AddScoped<IProductService, ProductService>();
+
+var app = builder.Build();
+```
+
+### Paso 2: Inyectar Dependencias a Través de Constructor
+
+Asegúrate de que todas las dependencias en `ProductController` sean inyectadas mediante el constructor, como ya lo hicimos en el objetivo anterior:
+
+```csharp
+public class ProductController : Controller
+{
+    private readonly IProductService _productService;
+
+    // Inyección de dependencias a través del constructor
+    public ProductController(IProductService productService)
+    {
+        _productService = productService;
+    }
+}
+```
+
+### Paso 3: Uso Correcto de DI para Facilitar Pruebas Unitarias
+
+El uso de interfaces para `IProductService` y `DatabaseContext` ahora permite que el controlador dependa de abstracciones. Esto facilita el proceso de pruebas unitarias, ya que podemos crear implementaciones simuladas (mock) de `IProductService` sin depender de una base de datos real.
+
+Por ejemplo, un test unitario del controlador `ProductController` podría configurar un mock de `IProductService` para verificar que las acciones se comporten correctamente sin necesidad de acceso directo a `DatabaseContext`.
+
+### Resumen
+
+Implementamos la inyección de dependencias correctamente, asegurándonos de que tanto `DatabaseContext` como `IProductService` se configuren en el contenedor de servicios de .NET. Con esto, hemos conseguido:
+
+- Reducir el acoplamiento y facilitar la sustitución de dependencias, lo que mejora la mantenibilidad.
+- Preparar el código para pruebas unitarias efectivas, al permitirnos usar mocks de `IProductService`.
+  
+El siguiente objetivo es **Optimizar las consultas a la base de datos**. En el código original, observamos que hay consultas innecesarias dentro de bucles, lo cual afecta el rendimiento y genera una carga innecesaria en la base de datos.
+
+### Problemas Actuales
+
+En el método `Index` del controlador, se está utilizando un bucle para obtener productos de la base de datos de manera individual, lo cual no es eficiente:
+
+```csharp
+var productsList = new List<Product>();
+foreach (var productId in _db.Products)
+{
+    productsList.Add(_db.Products.Find(productId));
+}
+```
+
+Este enfoque genera múltiples consultas a la base de datos, lo que puede ralentizar la aplicación, especialmente si el número de productos es grande.
+
+### Solución: Optimizar la Consulta para Obtener Todos los Productos de una Sola Vez
+
+Podemos optimizar este código obteniendo todos los productos en una sola consulta utilizando el método `ToList()`. Esto no solo es más eficiente, sino que también mejora la legibilidad del código.
+
+### Modificación en `ProductService`
+
+Ya que movimos la lógica de negocios a `ProductService`, haremos esta optimización directamente en el servicio:
+
+```csharp
+public IEnumerable<Product> GetAllProducts()
+{
+    // Optimización: obtener todos los productos en una sola consulta
+    return _db.Products.ToList();
+}
+```
+
+Con esta modificación, el método `GetAllProducts()` devuelve todos los productos en una sola consulta a la base de datos, eliminando el bucle y mejorando significativamente la eficiencia.
+
+### Uso en el Controlador
+
+Ahora, en `ProductController`, podemos llamar a este método optimizado:
+
+```csharp
+public IActionResult Index()
+{
+    // Llamada al servicio que ya contiene la consulta optimizada
+    var productsList = _productService.GetAllProducts();
+    return View(productsList);
+}
+```
+
+### Beneficios de la Optimización
+
+- **Reducción de Consultas a la Base de Datos**: Al realizar una sola consulta, se reduce la sobrecarga de la base de datos, lo que mejora la eficiencia.
+- **Código Más Limpio y Legible**: La eliminación del bucle hace que el código sea más sencillo y fácil de leer.
+- **Mejor Rendimiento**: Especialmente en bases de datos grandes, esta optimización tendrá un impacto positivo en la velocidad de respuesta de la aplicación.
+
+El siguiente objetivo es **Manejar excepciones de forma adecuada**. Actualmente, el código no maneja excepciones, lo que puede hacer que la aplicación falle de manera inesperada y sin mensajes claros para el usuario. Para mejorar la resiliencia de la aplicación, agregaremos manejo de excepciones en los métodos del controlador, de manera que podamos capturar y manejar errores de forma amigable.
+
+### Problemas Actuales
+
+En el método `Details`, por ejemplo, cuando un producto no se encuentra, se lanza una excepción sin manejar:
+
+```csharp
+var product = _productService.GetProductById(id);
+if (product == null)
+{
+    throw new Exception("Producto no encontrado");  // Sin manejo de excepciones
+}
+```
+
+Lanzar excepciones sin capturarlas es una mala práctica, ya que el usuario recibe un mensaje de error técnico en lugar de un mensaje claro que explique el problema. 
+
+### Solución: Implementar Manejo de Excepciones con Bloques `try-catch`
+
+Para resolver este problema, encapsularemos las llamadas a los métodos del servicio en bloques `try-catch`, de modo que podamos capturar las excepciones y mostrar mensajes personalizados.
+
+### Modificación en el `ProductController`
+
+Agregaremos el manejo de excepciones en los métodos `Details` y `Create` del controlador:
+
+```csharp
+public IActionResult Details(int id)
+{
+    try
+    {
+        var product = _productService.GetProductById(id);
+        if (product == null)
+        {
+            return NotFound("Producto no encontrado");  // Mensaje amigable para el usuario
+        }
+        return View(product);
+    }
+    catch (Exception ex)
+    {
+        // Registrar el error (se recomienda un sistema de logging)
+        Console.WriteLine($"Error en Details: {ex.Message}");
+        // Mostrar un mensaje de error genérico al usuario
+        return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+    }
+}
+
+[HttpPost]
+public IActionResult Create(Product product)
+{
+    if (!ModelState.IsValid)
+    {
+        return View(product);
+    }
+
+    try
+    {
+        _productService.AddProduct(product);
+        return RedirectToAction("Index");
+    }
+    catch (Exception ex)
+    {
+        // Registrar el error (se recomienda un sistema de logging)
+        Console.WriteLine($"Error en Create: {ex.Message}");
+        // Mensaje de error para el usuario
+        return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+    }
+}
+```
+
+### Detalles Importantes
+
+1. **Bloques `try-catch`**: Al envolver las operaciones críticas en bloques `try-catch`, podemos interceptar cualquier excepción que ocurra y manejarla de una manera controlada.
+2. **Mensajes de Error Personalizados**: Se agregaron mensajes claros para los casos de error, de modo que el usuario sepa qué sucedió sin ver detalles técnicos.
+3. **Log de Errores**: Aquí solo se usa `Console.WriteLine()` como ejemplo. En una aplicación de producción, es recomendable usar un sistema de logging, como `ILogger` de .NET, para almacenar estos errores en un archivo o sistema de monitoreo.
+
+### Beneficios
+
+- **Experiencia de Usuario Mejorada**: Los usuarios recibirán mensajes claros en lugar de errores técnicos.
+- **Mantenimiento**: Facilita la depuración y el monitoreo de errores en producción.
+- **Estabilidad**: La aplicación se vuelve más robusta y menos propensa a fallos inesperados.
+
+El siguiente objetivo es **Validar entradas de usuario en el modelo y el controlador**. Actualmente, el código no valida adecuadamente las entradas, lo que lo hace vulnerable a errores y posibles problemas de seguridad. Mejoraremos las validaciones tanto en el controlador como en el modelo para asegurarnos de que los datos recibidos sean correctos antes de procesarlos.
+
+### Problemas Actuales
+
+- En el método `Details`, no se valida si el `id` es un valor válido (por ejemplo, un valor negativo es inválido).
+- En el método `Create`, no se realiza una validación detallada del modelo `Product`.
+
+### Solución: Agregar Validaciones en el Modelo y en el Controlador
+
+1. **Anotaciones de Validación en el Modelo**: Utilizaremos atributos de validación para asegurarnos de que los datos de entrada cumplan ciertos requisitos.
+2. **Validaciones Adicionales en el Controlador**: Agregaremos validaciones para condiciones que no se puedan manejar solo con anotaciones, como el valor del `id`.
+
+### Paso 1: Anotaciones de Validación en el Modelo `Product`
+
+Primero, agregamos validaciones en el modelo `Product`. Por ejemplo, si tenemos propiedades como `Name` y `Price`, podríamos agregarles restricciones:
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+
+namespace MyApp.Models
+{
+    public class Product
+    {
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "El nombre del producto es obligatorio")]
+        [StringLength(100, ErrorMessage = "El nombre no puede superar los 100 caracteres")]
+        public string Name { get; set; }
+
+        [Required(ErrorMessage = "El precio del producto es obligatorio")]
+        [Range(0.01, double.MaxValue, ErrorMessage = "El precio debe ser mayor a cero")]
+        public decimal Price { get; set; }
+
+        // Otras propiedades y validaciones según sea necesario
+    }
+}
+```
+
+### Paso 2: Validaciones en el Controlador
+
+En el controlador, verificamos el `ModelState` para asegurarnos de que el modelo es válido antes de continuar con las operaciones. También validamos el `id` en el método `Details`.
+
+```csharp
+public IActionResult Details(int id)
+{
+    if (id <= 0)
+    {
+        return BadRequest("ID de producto inválido");
+    }
+
+    try
+    {
+        var product = _productService.GetProductById(id);
+        if (product == null)
+        {
+            return NotFound("Producto no encontrado");
+        }
+        return View(product);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Details: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+    }
+}
+
+[HttpPost]
+public IActionResult Create(Product product)
+{
+    if (!ModelState.IsValid)
+    {
+        return View(product);
+    }
+
+    try
+    {
+        _productService.AddProduct(product);
+        return RedirectToAction("Index");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Create: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+    }
+}
+```
+
+### Beneficios de las Validaciones
+
+- **Seguridad Mejorada**: Validar entradas reduce la posibilidad de ataques de inyección y asegura que los datos sean consistentes.
+- **Prevención de Errores**: Evita errores al detectar datos inválidos antes de procesarlos.
+- **Experiencia de Usuario**: Proporciona mensajes de error amigables, facilitando al usuario corregir datos ingresados incorrectamente.
+
+El siguiente objetivo es **Utilizar Data Transfer Objects (DTOs) en lugar de enviar modelos completos a la vista**. Actualmente, el controlador envía el modelo completo `Product` a las vistas, lo cual puede exponer datos innecesarios y, en algunos casos, sensibles. El uso de DTOs permite controlar exactamente qué datos se envían y recibir solo lo necesario desde el cliente.
+
+### Problemas Actuales
+
+Actualmente, el modelo `Product` se envía tal cual desde el servicio a las vistas, lo cual puede exponer datos innecesarios o sensibles. En aplicaciones grandes, esto puede ser un riesgo de seguridad y un problema de rendimiento.
+
+### Solución: Crear y Utilizar DTOs
+
+1. **Crear DTOs**: Creamos un DTO que contiene solo las propiedades necesarias para las vistas.
+2. **Mapear el Modelo al DTO**: Agregamos la conversión entre el modelo y el DTO en el servicio `ProductService`.
+3. **Modificar el Controlador para Utilizar el DTO**: Ajustamos el controlador para que solo envíe el DTO a la vista.
+
+### Paso 1: Crear un DTO para `Product`
+
+En una carpeta llamada `DTOs`, crea un archivo `ProductDTO.cs`:
+
+```csharp
+namespace MyApp.DTOs
+{
+    public class ProductDTO
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public decimal Price { get; set; }
+        // Añade solo las propiedades que son necesarias para la vista
+    }
+}
+```
+
+### Paso 2: Modificar el Servicio para Mapear el Modelo al DTO
+
+En `ProductService`, modificamos los métodos para que devuelvan `ProductDTO` en lugar de `Product`. Haremos una conversión manual del modelo `Product` al `ProductDTO` aquí, aunque luego podríamos automatizar este proceso (por ejemplo, usando `AutoMapper`, que abordaremos en el siguiente objetivo).
+
+```csharp
+using MyApp.Data;
+using MyApp.DTOs;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly DatabaseContext _db;
+
+        public ProductService(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            return _db.Products.Select(p => new ProductDTO
+            {
+                Id = p.Id,
+                Name = p.Name,
+                Price = p.Price
+            }).ToList();
+        }
+
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _db.Products.Find(id);
+            if (product == null) return null;
+
+            return new ProductDTO
+            {
+                Id = product.Id,
+                Name = product.Name,
+                Price = product.Price
+            };
+        }
+
+        public void AddProduct(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+### Paso 3: Modificar el Controlador para Utilizar `ProductDTO`
+
+Finalmente, ajustamos el controlador para usar `ProductDTO` en lugar de `Product` al enviar datos a las vistas.
+
+```csharp
+public IActionResult Index()
+{
+    var productsList = _productService.GetAllProducts();
+    return View(productsList);
+}
+
+public IActionResult Details(int id)
+{
+    if (id <= 0)
+    {
+        return BadRequest("ID de producto inválido");
+    }
+
+    try
+    {
+        var productDTO = _productService.GetProductById(id);
+        if (productDTO == null)
+        {
+            return NotFound("Producto no encontrado");
+        }
+        return View(productDTO);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Details: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+    }
+}
+```
+
+### Beneficios de Usar DTOs
+
+- **Control de Datos**: Permite enviar solo los datos necesarios, reduciendo el riesgo de exponer información sensible o innecesaria.
+- **Mejora de Rendimiento**: Se envían menos datos, lo que puede reducir el tiempo de carga y la cantidad de memoria utilizada.
+- **Mantenimiento Simplificado**: Si el modelo cambia, no necesariamente hay que actualizar las vistas, ya que solo los DTOs se ven afectados.
+
+El siguiente objetivo es **Implementar mapeo automático (AutoMapper) para la conversión de datos**. Actualmente, estamos realizando manualmente la conversión entre el modelo `Product` y `ProductDTO`, lo cual resulta en código repetitivo y poco eficiente. Con AutoMapper, podemos automatizar este proceso, simplificando el código y reduciendo errores.
+
+### Instalación y Configuración de AutoMapper
+
+1. **Instalar AutoMapper**: Primero, debemos instalar el paquete de AutoMapper para .NET. Puedes hacer esto a través de NuGet en Visual Studio o mediante la consola de administración de paquetes:
+
+   ```bash
+   dotnet add package AutoMapper.Extensions.Microsoft.DependencyInjection
+   ```
+
+2. **Configurar AutoMapper en el Proyecto**: Luego, en el archivo `Program.cs`, registramos AutoMapper en el contenedor de servicios.
+
+   ```csharp
+   using AutoMapper;
+
+   var builder = WebApplication.CreateBuilder(args);
+
+   // Configuración de AutoMapper
+   builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+
+   var app = builder.Build();
+   ```
+
+### Paso 1: Crear el Perfil de Mapeo
+
+En una nueva carpeta llamada `Mappings`, crea un archivo `MappingProfile.cs` para definir los mapeos entre `Product` y `ProductDTO`. Este perfil indica a AutoMapper cómo convertir entre los distintos modelos y DTOs.
+
+```csharp
+using AutoMapper;
+using MyApp.Models;
+using MyApp.DTOs;
+
+namespace MyApp.Mappings
+{
+    public class MappingProfile : Profile
+    {
+        public MappingProfile()
+        {
+            // Mapeo entre Product y ProductDTO
+            CreateMap<Product, ProductDTO>();
+            CreateMap<ProductDTO, Product>();
+        }
+    }
+}
+```
+
+### Paso 2: Usar AutoMapper en el Servicio `ProductService`
+
+En lugar de mapear manualmente, usaremos AutoMapper para convertir entre `Product` y `ProductDTO`. Inyectamos `IMapper` en `ProductService` y lo utilizamos para realizar la conversión de manera automática.
+
+```csharp
+using AutoMapper;
+using MyApp.Data;
+using MyApp.DTOs;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly DatabaseContext _db;
+        private readonly IMapper _mapper;
+
+        public ProductService(DatabaseContext db, IMapper mapper)
+        {
+            _db = db;
+            _mapper = mapper;
+        }
+
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            var products = _db.Products.ToList();
+            return _mapper.Map<IEnumerable<ProductDTO>>(products);
+        }
+
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _db.Products.Find(id);
+            return product == null ? null : _mapper.Map<ProductDTO>(product);
+        }
+
+        public void AddProduct(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+### Paso 3: Modificar el Controlador (Sin Cambios Adicionales)
+
+El controlador no necesita cambios adicionales, ya que sigue recibiendo `ProductDTO` desde el servicio. AutoMapper se encarga de realizar las conversiones automáticamente, lo cual mantiene el controlador limpio y enfocado en su funcionalidad.
+
+```csharp
+public IActionResult Index()
+{
+    var productsList = _productService.GetAllProducts();
+    return View(productsList);
+}
+
+public IActionResult Details(int id)
+{
+    if (id <= 0)
+    {
+        return BadRequest("ID de producto inválido");
+    }
+
+    try
+    {
+        var productDTO = _productService.GetProductById(id);
+        if (productDTO == null)
+        {
+            return NotFound("Producto no encontrado");
+        }
+        return View(productDTO);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Details: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+    }
+}
+```
+
+### Beneficios de Usar AutoMapper
+
+- **Reducción de Código Repetitivo**: Con AutoMapper, el mapeo se realiza automáticamente, eliminando código redundante.
+- **Menor Propensión a Errores**: AutoMapper se encarga de las conversiones, lo que reduce el riesgo de errores al mapear propiedades manualmente.
+- **Escalabilidad**: Si se agregan nuevas propiedades, solo es necesario actualizar el perfil de mapeo sin modificar cada método que realiza la conversión.
+
+El siguiente objetivo es **Mejorar el manejo del ciclo de vida de los objetos en el controlador**. Esto es importante para evitar fugas de memoria y garantizar que los recursos se liberen adecuadamente una vez que ya no son necesarios.
+
+### Problemas Actuales
+
+En el código original, el `DatabaseContext` se liberaba manualmente en el método `Dispose` del controlador. Sin embargo, con la inyección de dependencias en .NET, es mejor permitir que el marco de trabajo gestione el ciclo de vida de los objetos automáticamente.
+
+Actualmente, el código en el controlador se ve así:
+
+```csharp
+protected override void Dispose(bool disposing)
+{
+    if (disposing)
+    {
+        // Liberación de recursos no realizada correctamente
+        _db.Dispose();
+    }
+    base.Dispose(disposing);
+}
+```
+
+Esto ya no es necesario y es potencialmente problemático, ya que el contexto `DatabaseContext` se está manejando a través de inyección de dependencias y el ciclo de vida de `Scoped`. 
+
+### Solución: Quitar el Método `Dispose` y Dejar que .NET Maneje el Ciclo de Vida
+
+Al usar inyección de dependencias, .NET se encarga de liberar el `DatabaseContext` automáticamente al final del ciclo de vida de la solicitud HTTP. Esto significa que no necesitamos sobreescribir el método `Dispose` en el controlador.
+
+1. **Eliminar el Método `Dispose`** en el controlador.
+2. **Confiar en la Configuración de DI (`Scoped`)** en `Program.cs`, donde se registró `DatabaseContext` como `Scoped`, para asegurar que .NET maneje el ciclo de vida de los recursos.
+
+### Código Actualizado del Controlador sin `Dispose`
+
+El controlador se reduce y queda más limpio sin el método `Dispose`, y su manejo del ciclo de vida es ahora más seguro y administrado automáticamente por el contenedor de inyección de dependencias:
+
+```csharp
+public class ProductController : Controller
+{
+    private readonly IProductService _productService;
+
+    public ProductController(IProductService productService)
+    {
+        _productService = productService;
+    }
+
+    public IActionResult Index()
+    {
+        var productsList = _productService.GetAllProducts();
+        return View(productsList);
+    }
+
+    public IActionResult Details(int id)
+    {
+        if (id <= 0)
+        {
+            return BadRequest("ID de producto inválido");
+        }
+
+        try
+        {
+            var productDTO = _productService.GetProductById(id);
+            if (productDTO == null)
+            {
+                return NotFound("Producto no encontrado");
+            }
+            return View(productDTO);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en Details: {ex.Message}");
+            return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+        }
+    }
+
+    [HttpPost]
+    public IActionResult Create(Product product)
+    {
+        if (!ModelState.IsValid)
+        {
+            return View(product);
+        }
+
+        try
+        {
+            _productService.AddProduct(product);
+            return RedirectToAction("Index");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en Create: {ex.Message}");
+            return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+        }
+    }
+}
+```
+
+### Beneficios de Dejar que .NET Maneje el Ciclo de Vida
+
+- **Reducción de Código**: Menos código significa menos mantenimiento y menos posibilidades de errores.
+- **Eficiencia de Memoria**: .NET garantiza la liberación de recursos al final del ciclo de vida de la solicitud HTTP, evitando posibles fugas de memoria.
+- **Cumplimiento de Buenas Prácticas**: Este enfoque respeta las mejores prácticas para el manejo de recursos en aplicaciones ASP.NET Core.
+
+El siguiente objetivo es **Aplicar principios SOLID**, especialmente el principio de **Responsabilidad Única (SRP)** y el de **Abierto/Cerrado (OCP)**. Estos principios ayudan a estructurar el código de una manera que sea más fácil de mantener, extender y probar, sin introducir cambios innecesarios o violar la separación de responsabilidades.
+
+### Problemas Actuales
+
+Aunque hemos mejorado considerablemente la estructura de la aplicación, todavía podemos aplicar algunos principios SOLID para optimizar su diseño:
+
+1. **Responsabilidad Única (SRP)**: Aún hay algunos métodos en el controlador que realizan múltiples tareas, como manejar excepciones, interactuar con el servicio, y preparar respuestas para la vista. También, el servicio `ProductService` realiza tanto la lógica de negocio como el acceso a datos, lo cual viola el principio de responsabilidad única.
+
+2. **Abierto/Cerrado (OCP)**: Actualmente, si necesitamos cambiar la lógica de obtención de productos, tendríamos que modificar `ProductService` directamente. Esto no sigue el principio de abierto/cerrado, que establece que las clases deben estar abiertas para extensión pero cerradas para modificación.
+
+### Solución: Refactorizar el Código para Cumplir con SRP y OCP
+
+1. **Dividir las Responsabilidades en el Servicio**: Creamos un repositorio que maneje el acceso a datos de `Product`, permitiendo que `ProductService` se enfoque únicamente en la lógica de negocio.
+
+2. **Uso de Interfaces para Cumplir con OCP**: Usaremos interfaces para definir el repositorio y el servicio, lo que permitirá implementar nuevas funcionalidades sin modificar las clases originales.
+
+### Paso 1: Crear un Repositorio para `Product`
+
+En una nueva carpeta llamada `Repositories`, creamos un archivo `IProductRepository.cs` que define las operaciones básicas de acceso a datos.
+
+```csharp
+using MyApp.Models;
+using System.Collections.Generic;
+
+namespace MyApp.Repositories
+{
+    public interface IProductRepository
+    {
+        IEnumerable<Product> GetAll();
+        Product GetById(int id);
+        void Add(Product product);
+    }
+}
+```
+
+Luego, implementamos `ProductRepository`, que interactuará directamente con `DatabaseContext` y será responsable de las operaciones de acceso a datos:
+
+```csharp
+using MyApp.Data;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Repositories
+{
+    public class ProductRepository : IProductRepository
+    {
+        private readonly DatabaseContext _db;
+
+        public ProductRepository(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        public IEnumerable<Product> GetAll()
+        {
+            return _db.Products.ToList();
+        }
+
+        public Product GetById(int id)
+        {
+            return _db.Products.Find(id);
+        }
+
+        public void Add(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+### Paso 2: Modificar `ProductService` para Usar el Repositorio
+
+Ahora, `ProductService` se centrará únicamente en la lógica de negocio y delegará el acceso a datos al repositorio. 
+
+```csharp
+using AutoMapper;
+using MyApp.DTOs;
+using MyApp.Models;
+using MyApp.Repositories;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly IProductRepository _productRepository;
+        private readonly IMapper _mapper;
+
+        public ProductService(IProductRepository productRepository, IMapper mapper)
+        {
+            _productRepository = productRepository;
+            _mapper = mapper;
+        }
+
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            var products = _productRepository.GetAll();
+            return _mapper.Map<IEnumerable<ProductDTO>>(products);
+        }
+
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _productRepository.GetById(id);
+            return product == null ? null : _mapper.Map<ProductDTO>(product);
+        }
+
+        public void AddProduct(Product product)
+        {
+            _productRepository.Add(product);
+        }
+    }
+}
+```
+
+### Paso 3: Registrar el Repositorio en el Contenedor de Dependencias
+
+En `Program.cs`, registramos `IProductRepository` para que el sistema sepa qué implementación utilizar cuando inyecte esta dependencia.
+
+```csharp
+using MyApp.Repositories;
+using MyApp.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Registro del contexto de base de datos, repositorio y servicio
+builder.Services.AddDbContext<DatabaseContext>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+
+var app = builder.Build();
+```
+
+### Beneficios de Aplicar SRP y OCP
+
+- **Código Modular y Fácil de Mantener**: Cada clase tiene una única responsabilidad, haciendo que el código sea más modular y fácil de mantener.
+- **Extensibilidad**: Cumplimos con el principio de abierto/cerrado, permitiendo extender las funcionalidades (como implementar un nuevo tipo de repositorio) sin modificar las clases existentes.
+- **Separación de Lógica de Negocios y Acceso a Datos**: El servicio se enfoca en la lógica de negocio y el repositorio en el acceso a datos, cumpliendo con SRP.
+
+El siguiente objetivo es **Añadir comentarios y mejorar la documentación del código**. Esto facilitará el mantenimiento y comprensión del código, especialmente en proyectos colaborativos o de larga duración. A continuación, agregaremos comentarios explicativos en puntos clave del controlador, servicio y repositorio.
+
+### Ejemplo de Comentarios en el Código
+
+Aquí está el código con comentarios agregados para que cada parte sea clara y fácil de entender.
+
+#### Controlador `ProductController`
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using MyApp.DTOs;
+using MyApp.Services;
+using System;
+
+namespace MyApp.Controllers
+{
+    public class ProductController : Controller
+    {
+        private readonly IProductService _productService;
+
+        // Inyección de dependencia del servicio de productos
+        public ProductController(IProductService productService)
+        {
+            _productService = productService;
+        }
+
+        // Método para listar todos los productos
+        public IActionResult Index()
+        {
+            // Llamada al servicio para obtener todos los productos
+            var productsList = _productService.GetAllProducts();
+            return View(productsList);
+        }
+
+        // Método para mostrar detalles de un producto específico
+        public IActionResult Details(int id)
+        {
+            // Validación del ID
+            if (id <= 0)
+            {
+                return BadRequest("ID de producto inválido");
+            }
+
+            try
+            {
+                // Obtener el producto por su ID usando el servicio
+                var productDTO = _productService.GetProductById(id);
+                
+                // Si no se encuentra el producto, devolver un error 404
+                if (productDTO == null)
+                {
+                    return NotFound("Producto no encontrado");
+                }
+                return View(productDTO);
+            }
+            catch (Exception ex)
+            {
+                // Manejo de excepciones para errores inesperados
+                Console.WriteLine($"Error en Details: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+            }
+        }
+
+        // Método para crear un nuevo producto
+        [HttpPost]
+        public IActionResult Create(ProductDTO product)
+        {
+            // Validación del modelo
+            if (!ModelState.IsValid)
+            {
+                return View(product);
+            }
+
+            try
+            {
+                // Agregar el producto a través del servicio
+                _productService.AddProduct(product);
+                return RedirectToAction("Index");
+            }
+            catch (Exception ex)
+            {
+                // Manejo de excepciones en caso de error
+                Console.WriteLine($"Error en Create: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+            }
+        }
+    }
+}
+```
+
+#### Servicio `ProductService`
+
+```csharp
+using AutoMapper;
+using MyApp.DTOs;
+using MyApp.Models;
+using MyApp.Repositories;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly IProductRepository _productRepository;
+        private readonly IMapper _mapper;
+
+        // Inyección de dependencia del repositorio y AutoMapper
+        public ProductService(IProductRepository productRepository, IMapper mapper)
+        {
+            _productRepository = productRepository;
+            _mapper = mapper;
+        }
+
+        // Método para obtener todos los productos y mapearlos a ProductDTO
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            var products = _productRepository.GetAll();
+            return _mapper.Map<IEnumerable<ProductDTO>>(products);
+        }
+
+        // Método para obtener un producto por su ID y mapearlo a ProductDTO
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _productRepository.GetById(id);
+            return product == null ? null : _mapper.Map<ProductDTO>(product);
+        }
+
+        // Método para agregar un nuevo producto al repositorio
+        public void AddProduct(ProductDTO productDTO)
+        {
+            // Mapear ProductDTO a Product antes de agregar
+            var product = _mapper.Map<Product>(productDTO);
+            _productRepository.Add(product);
+        }
+    }
+}
+```
+
+#### Repositorio `ProductRepository`
+
+```csharp
+using MyApp.Data;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Repositories
+{
+    public class ProductRepository : IProductRepository
+    {
+        private readonly DatabaseContext _db;
+
+        // Inyección de dependencia del contexto de base de datos
+        public ProductRepository(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        // Método para obtener todos los productos de la base de datos
+        public IEnumerable<Product> GetAll()
+        {
+            return _db.Products.ToList();
+        }
+
+        // Método para obtener un producto específico por ID
+        public Product GetById(int id)
+        {
+            return _db.Products.Find(id);
+        }
+
+        // Método para agregar un nuevo producto a la base de datos
+        public void Add(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+### Beneficios de la Documentación
+
+- **Facilita el Mantenimiento**: Cualquier desarrollador puede entender rápidamente la función de cada método y clase.
+- **Mejora la Comprensión**: La lógica detrás de cada paso queda clara, facilitando el aprendizaje de nuevos miembros del equipo.
+- **Reduce Errores**: Comentarios claros evitan malentendidos sobre el propósito del código, reduciendo la probabilidad de errores al modificarlo.
+
+El último objetivo es **Validar entradas de usuario en el modelo y el controlador**. Actualmente, el código no valida adecuadamente las entradas, lo que lo hace vulnerable a errores y posibles problemas de seguridad. Mejoraremos las validaciones tanto en el controlador como en el modelo para asegurarnos de que los datos recibidos sean correctos antes de procesarlos.
+
+### Problemas Actuales
+
+- En el método `Details`, no se valida si el `id` es un valor válido (por ejemplo, un valor negativo es inválido).
+- En el método `Create`, no se realiza una validación detallada del modelo `Product`.
+
+### Solución: Agregar Validaciones en el Modelo y en el Controlador
+
+1. **Anotaciones de Validación en el Modelo**: Utilizaremos atributos de validación para asegurarnos de que los datos de entrada cumplan ciertos requisitos.
+2. **Validaciones Adicionales en el Controlador**: Agregaremos validaciones para condiciones que no se puedan manejar solo con anotaciones, como el valor del `id`.
+
+### Paso 1: Anotaciones de Validación en el Modelo `Product`
+
+Primero, agregamos validaciones en el modelo `Product`. Por ejemplo, si tenemos propiedades como `Name` y `Price`, podríamos agregarles restricciones:
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+
+namespace MyApp.Models
+{
+    public class Product
+    {
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "El nombre del producto es obligatorio")]
+        [StringLength(100, ErrorMessage = "El nombre no puede superar los 100 caracteres")]
+        public string Name { get; set; }
+
+        [Required(ErrorMessage = "El precio del producto es obligatorio")]
+        [Range(0.01, double.MaxValue, ErrorMessage = "El precio debe ser mayor a cero")]
+        public decimal Price { get; set; }
+
+        // Otras propiedades y validaciones según sea necesario
+    }
+}
+```
+
+### Paso 2: Validaciones en el Controlador
+
+En el controlador, verificamos el `ModelState` para asegurarnos de que el modelo es válido antes de continuar con las operaciones. También validamos el `id` en el método `Details`.
+
+```csharp
+public IActionResult Details(int id)
+{
+    if (id <= 0)
+    {
+        return BadRequest("ID de producto inválido");
+    }
+
+    try
+    {
+        var product = _productService.GetProductById(id);
+        if (product == null)
+        {
+            return NotFound("Producto no encontrado");
+        }
+        return View(product);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Details: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+    }
+}
+
+[HttpPost]
+public IActionResult Create(Product product)
+{
+    if (!ModelState.IsValid)
+    {
+        return View(product);
+    }
+
+    try
+    {
+        _productService.AddProduct(product);
+        return RedirectToAction("Index");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error en Create: {ex.Message}");
+        return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+    }
+}
+```
+
+### Beneficios de las Validaciones
+
+- **Seguridad Mejorada**: Validar entradas reduce la posibilidad de ataques de inyección y asegura que los datos sean consistentes.
+- **Prevención de Errores**: Evita errores al detectar datos inválidos antes de procesarlos.
+- **Experiencia de Usuario**: Proporciona mensajes de error amigables, facilitando al usuario corregir datos ingresados incorrectamente.
