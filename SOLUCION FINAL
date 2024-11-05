@@ -1,0 +1,484 @@
+Aquí tienes el código completo con todas las mejoras implementadas, organizado en los archivos correspondientes para el proyecto.
+
+---
+
+### **1. Product Model (Models/Product.cs)**
+
+El modelo `Product` con anotaciones de validación para verificar entradas y asegurar que los datos cumplan ciertos requisitos.
+
+```csharp
+using System.ComponentModel.DataAnnotations;
+
+namespace MyApp.Models
+{
+    public class Product
+    {
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "El nombre del producto es obligatorio")]
+        [StringLength(100, ErrorMessage = "El nombre no puede superar los 100 caracteres")]
+        public string Name { get; set; }
+
+        [Required(ErrorMessage = "El precio del producto es obligatorio")]
+        [Range(0.01, double.MaxValue, ErrorMessage = "El precio debe ser mayor a cero")]
+        public decimal Price { get; set; }
+    }
+}
+```
+
+---
+
+### **2. ProductDTO (DTOs/ProductDTO.cs)**
+
+El Data Transfer Object (DTO) `ProductDTO`, que contiene solo las propiedades necesarias para enviar a la vista.
+
+```csharp
+namespace MyApp.DTOs
+{
+    public class ProductDTO
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public decimal Price { get; set; }
+    }
+}
+```
+
+---
+
+### **3. Product Repository Interface (Repositories/IProductRepository.cs)**
+
+La interfaz `IProductRepository` que define las operaciones de acceso a datos para `Product`.
+
+```csharp
+using MyApp.Models;
+using System.Collections.Generic;
+
+namespace MyApp.Repositories
+{
+    public interface IProductRepository
+    {
+        IEnumerable<Product> GetAll();
+        Product GetById(int id);
+        void Add(Product product);
+    }
+}
+```
+
+---
+
+### **4. Product Repository Implementation (Repositories/ProductRepository.cs)**
+
+La implementación `ProductRepository` de `IProductRepository`, responsable del acceso a datos de `Product`.
+
+```csharp
+using MyApp.Data;
+using MyApp.Models;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace MyApp.Repositories
+{
+    public class ProductRepository : IProductRepository
+    {
+        private readonly DatabaseContext _db;
+
+        public ProductRepository(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        public IEnumerable<Product> GetAll()
+        {
+            return _db.Products.ToList();
+        }
+
+        public Product GetById(int id)
+        {
+            return _db.Products.Find(id);
+        }
+
+        public void Add(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+}
+```
+
+---
+
+### **5. Product Service Interface (Services/IProductService.cs)**
+
+La interfaz `IProductService` que define las operaciones de lógica de negocio para `Product`.
+
+```csharp
+using MyApp.DTOs;
+using MyApp.Models;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public interface IProductService
+    {
+        IEnumerable<ProductDTO> GetAllProducts();
+        ProductDTO GetProductById(int id);
+        void AddProduct(ProductDTO product);
+    }
+}
+```
+
+---
+
+### **6. Product Service Implementation (Services/ProductService.cs)**
+
+La implementación `ProductService` de `IProductService`, responsable de la lógica de negocio y de mapear entre `Product` y `ProductDTO`.
+
+```csharp
+using AutoMapper;
+using MyApp.DTOs;
+using MyApp.Models;
+using MyApp.Repositories;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public class ProductService : IProductService
+    {
+        private readonly IProductRepository _productRepository;
+        private readonly IMapper _mapper;
+
+        public ProductService(IProductRepository productRepository, IMapper mapper)
+        {
+            _productRepository = productRepository;
+            _mapper = mapper;
+        }
+
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            var products = _productRepository.GetAll();
+            return _mapper.Map<IEnumerable<ProductDTO>>(products);
+        }
+
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _productRepository.GetById(id);
+            return product == null ? null : _mapper.Map<ProductDTO>(product);
+        }
+
+        public void AddProduct(ProductDTO productDTO)
+        {
+            var product = _mapper.Map<Product>(productDTO);
+            _productRepository.Add(product);
+        }
+    }
+}
+```
+
+---
+
+### **7. Mapping Profile (Mappings/MappingProfile.cs)**
+
+Configuración de AutoMapper para mapear entre `Product` y `ProductDTO`.
+
+```csharp
+using AutoMapper;
+using MyApp.Models;
+using MyApp.DTOs;
+
+namespace MyApp.Mappings
+{
+    public class MappingProfile : Profile
+    {
+        public MappingProfile()
+        {
+            CreateMap<Product, ProductDTO>();
+            CreateMap<ProductDTO, Product>();
+        }
+    }
+}
+```
+
+---
+
+### **8. Product Controller (Controllers/ProductController.cs)**
+
+El controlador `ProductController`, que maneja las solicitudes HTTP y usa el servicio `IProductService` para obtener datos de productos y manejar la lógica de negocio.
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using MyApp.DTOs;
+using MyApp.Services;
+using System;
+
+namespace MyApp.Controllers
+{
+    public class ProductController : Controller
+    {
+        private readonly IProductService _productService;
+
+        public ProductController(IProductService productService)
+        {
+            _productService = productService;
+        }
+
+        public IActionResult Index()
+        {
+            var productsList = _productService.GetAllProducts();
+            return View(productsList);
+        }
+
+        public IActionResult Details(int id)
+        {
+            if (id <= 0)
+            {
+                return BadRequest("ID de producto inválido");
+            }
+
+            try
+            {
+                var productDTO = _productService.GetProductById(id);
+                if (productDTO == null)
+                {
+                    return NotFound("Producto no encontrado");
+                }
+                return View(productDTO);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error en Details: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+            }
+        }
+
+        [HttpPost]
+        public IActionResult Create(ProductDTO product)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View(product);
+            }
+
+            try
+            {
+                _productService.AddProduct(product);
+                return RedirectToAction("Index");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error en Create: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+            }
+        }
+    }
+}
+```
+
+---
+
+### **9. Program.cs (Configuración de Inyección de Dependencias)**
+
+Registro de dependencias en `Program.cs`, incluyendo `DatabaseContext`, `ProductRepository`, `ProductService` y AutoMapper.
+
+```csharp
+using MyApp.Data;
+using MyApp.Repositories;
+using MyApp.Services;
+using AutoMapper;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Configuración de servicios
+builder.Services.AddDbContext<DatabaseContext>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+
+var app = builder.Build();
+```
+
+---
+
+Con estas mejoras, el código ahora sigue principios SOLID, utiliza inyección de dependencias, gestiona eficientemente el ciclo de vida de los objetos, valida correctamente los datos de entrada y maneja excepciones adecuadamente. Esto asegura una aplicación más robusta, escalable y mantenible.
+
+## CODIGO FINAL
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Mvc;
+using AutoMapper;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace MyApp
+{
+    // MODELO
+    public class Product
+    {
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "El nombre del producto es obligatorio")]
+        [StringLength(100, ErrorMessage = "El nombre no puede superar los 100 caracteres")]
+        public string Name { get; set; }
+
+        [Required(ErrorMessage = "El precio del producto es obligatorio")]
+        [Range(0.01, double.MaxValue, ErrorMessage = "El precio debe ser mayor a cero")]
+        public decimal Price { get; set; }
+    }
+
+    // DTO
+    public class ProductDTO
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public decimal Price { get; set; }
+    }
+
+    // DATABASE CONTEXT
+    public class DatabaseContext : DbContext
+    {
+        public DbSet<Product> Products { get; set; }
+    }
+
+    // REPOSITORIO
+    public interface IProductRepository
+    {
+        IEnumerable<Product> GetAll();
+        Product GetById(int id);
+        void Add(Product product);
+    }
+
+    public class ProductRepository : IProductRepository
+    {
+        private readonly DatabaseContext _db;
+
+        public ProductRepository(DatabaseContext db)
+        {
+            _db = db;
+        }
+
+        public IEnumerable<Product> GetAll() => _db.Products.ToList();
+
+        public Product GetById(int id) => _db.Products.Find(id);
+
+        public void Add(Product product)
+        {
+            _db.Products.Add(product);
+            _db.SaveChanges();
+        }
+    }
+
+    // SERVICIO
+    public interface IProductService
+    {
+        IEnumerable<ProductDTO> GetAllProducts();
+        ProductDTO GetProductById(int id);
+        void AddProduct(ProductDTO product);
+    }
+
+    public class ProductService : IProductService
+    {
+        private readonly IProductRepository _productRepository;
+        private readonly IMapper _mapper;
+
+        public ProductService(IProductRepository productRepository, IMapper mapper)
+        {
+            _productRepository = productRepository;
+            _mapper = mapper;
+        }
+
+        public IEnumerable<ProductDTO> GetAllProducts()
+        {
+            var products = _productRepository.GetAll();
+            return _mapper.Map<IEnumerable<ProductDTO>>(products);
+        }
+
+        public ProductDTO GetProductById(int id)
+        {
+            var product = _productRepository.GetById(id);
+            return product == null ? null : _mapper.Map<ProductDTO>(product);
+        }
+
+        public void AddProduct(ProductDTO productDTO)
+        {
+            var product = _mapper.Map<Product>(productDTO);
+            _productRepository.Add(product);
+        }
+    }
+
+    // CONTROLADOR
+    public class ProductController : Controller
+    {
+        private readonly IProductService _productService;
+
+        public ProductController(IProductService productService)
+        {
+            _productService = productService;
+        }
+
+        public IActionResult Index()
+        {
+            var productsList = _productService.GetAllProducts();
+            return View(productsList);
+        }
+
+        public IActionResult Details(int id)
+        {
+            if (id <= 0) return BadRequest("ID de producto inválido");
+
+            try
+            {
+                var productDTO = _productService.GetProductById(id);
+                if (productDTO == null) return NotFound("Producto no encontrado");
+                return View(productDTO);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error en Details: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar cargar el producto.");
+            }
+        }
+
+        [HttpPost]
+        public IActionResult Create(ProductDTO product)
+        {
+            if (!ModelState.IsValid) return View(product);
+
+            try
+            {
+                _productService.AddProduct(product);
+                return RedirectToAction("Index");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error en Create: {ex.Message}");
+                return StatusCode(500, "Ocurrió un error al intentar crear el producto.");
+            }
+        }
+    }
+
+    // MAPEOS
+    public class MappingProfile : Profile
+    {
+        public MappingProfile()
+        {
+            CreateMap<Product, ProductDTO>();
+            CreateMap<ProductDTO, Product>();
+        }
+    }
+
+    // CONFIGURACIÓN DE SERVICIOS
+    public class Startup
+    {
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddDbContext<DatabaseContext>(options => options.UseInMemoryDatabase("ProductDB"));
+            services.AddScoped<IProductRepository, ProductRepository>();
+            services.AddScoped<IProductService, ProductService>();
+            services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+            services.AddControllersWithViews();
+        }
+    }
+}
